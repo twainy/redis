@@ -545,11 +545,12 @@ void rpoplpushHandlePush(redisClient *c, robj *dstkey, robj *dstobj, robj *value
     listTypePush(dstobj,value,REDIS_HEAD);
     notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"lpush",dstkey,c->db->id);
     /* Always send the pushed value to the client. */
-    addReplyBulk(c,value);
+    addReplyBulk(c, value);
 }
 
 void rpoplpushCommand(redisClient *c) {
     robj *sobj, *value;
+    int i;
     if ((sobj = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
         checkType(c,sobj,REDIS_LIST)) return;
 
@@ -560,28 +561,39 @@ void rpoplpushCommand(redisClient *c) {
     } else {
         robj *dobj = lookupKeyWrite(c->db,c->argv[2]);
         robj *touchedkey = c->argv[1];
+        long count = 1;
 
-        if (dobj && checkType(c,dobj,REDIS_LIST)) return;
-        value = listTypePop(sobj,REDIS_TAIL);
-        /* We saved touched key, and protect it, since rpoplpushHandlePush
-         * may change the client command argument vector (it does not
-         * currently). */
-        incrRefCount(touchedkey);
-        rpoplpushHandlePush(c,c->argv[2],dobj,value);
-
-        /* listTypePop returns an object with its refcount incremented */
-        decrRefCount(value);
-
-        /* Delete the source list when it is empty */
-        notifyKeyspaceEvent(REDIS_NOTIFY_LIST,"rpop",touchedkey,c->db->id);
-        if (listTypeLength(sobj) == 0) {
-            dbDelete(c->db,touchedkey);
-            notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC,"del",
-                                touchedkey,c->db->id);
+        if (strcasecmp(c->argv[3]->ptr,"COUNT") == 0) {
+            // use multiple item
+            if (getLongFromObjectOrReply(c,c->argv[4], &count, "Invalid count") != REDIS_OK) {
+                addReplyError(c, "INVALID COUNT");
+            }
         }
-        signalModifiedKey(c->db,touchedkey);
+
+        if (dobj && checkType(c, dobj, REDIS_LIST)) return;
+        incrRefCount(touchedkey);
+        addReplyMultiBulkLen(c, count);
+        for (i = 0; i < count; i++) {
+            value = listTypePop(sobj, REDIS_TAIL);
+            /* We saved touched key, and protect it, since rpoplpushHandlePush
+             * may change the client command argument vector (it does not
+             * currently). */
+            rpoplpushHandlePush(c, c->argv[2], dobj, value);
+
+            /* listTypePop returns an object with its refcount incremented */
+            decrRefCount(value);
+
+            /* Delete the source list when it is empty */
+            notifyKeyspaceEvent(REDIS_NOTIFY_LIST, "rpop", touchedkey, c->db->id);
+            if (listTypeLength(sobj) == 0) {
+                dbDelete(c->db, touchedkey);
+                notifyKeyspaceEvent(REDIS_NOTIFY_GENERIC, "del",
+                        touchedkey, c->db->id);
+            }
+            signalModifiedKey(c->db, touchedkey);
+            server.dirty++;
+        }
         decrRefCount(touchedkey);
-        server.dirty++;
     }
 }
 
