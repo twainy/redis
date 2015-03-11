@@ -664,7 +664,12 @@ start_server {
         assert_equal {} [r rpoplpush srclist dstlist]
     } {}
 
-    foreach {type large} [array get largevalue] {
+    test {RPOPLPUSH with count} {
+        r del srclist dstlist
+        assert_equal {} [r rpoplpush srclist dstlist]
+    } {}
+
+     foreach {type large} [array get largevalue] {
         test "Basic LPOP/RPOP - $type" {
             create_list mylist "$large 1 2"
             assert_equal $large [r lpop mylist]
